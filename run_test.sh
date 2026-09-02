@@ -34,11 +34,11 @@ N_J=20
 N_M=10
 DATA_SOURCE=SD1
 
-# scheduling-aware graph coarsening (SAGC) -- must match run_train.sh
-POOLING_TYPE=sagc
+# random operation pooling -- must match run_train.sh
+POOLING_TYPE=random
 POOLING_RATIO=2.0
 K_MODE=jobs
-export RUN_TAG=sagc
+export RUN_TAG=random
 
 MODEL_PATH="./trained_network/${DATA_SOURCE}/${N_J}x${N_M}+${RUN_TAG}_seed${SEED}.pth"
 

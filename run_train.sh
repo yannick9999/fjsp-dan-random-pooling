@@ -34,11 +34,11 @@ N_M=10
 DATA_SOURCE=SD1
 MAX_UPDATES=1000
 
-# scheduling-aware graph coarsening (SAGC)
-POOLING_TYPE=sagc
+# random operation pooling
+POOLING_TYPE=random
 POOLING_RATIO=2.0
 K_MODE=jobs
-RUN_TAG=sagc
+RUN_TAG=random
 
 echo "=== Training seed=${SEED} data_source=${DATA_SOURCE} size=${N_J}x${N_M} pooling=${POOLING_TYPE} ratio=${POOLING_RATIO} k_mode=${K_MODE} ==="
 srun nvidia-smi || true

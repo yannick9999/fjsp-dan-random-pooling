@@ -2,15 +2,16 @@ import torch
 import torch.nn as nn
 
 
-class SAGCPoolDAN(nn.Module):
+class RandomPoolDAN(nn.Module):
     """
-    Scheduling-Aware Graph Coarsening (SAGC) for the dense DAN tensor format.
+    Random pooling for the dense DAN tensor format.
 
-    Analogous to graph/pooling/sagc.py in the Song-based repo:
-    the retention score is computed from [GNN embedding || normalized raw
-    operation features] instead of the embedding alone.
+    Replaces the learned SAGC retention score with a uniform random score,
+    so which operations survive pooling is decided by chance instead of a
+    learned projection. Protection/exclusion rules, k, and the masking
+    logic that rebuilds op_mask are unchanged.
 
-    Differences to the Song version, caused by the DAN data format:
+    Differences to the SAGC version, caused by the DAN data format:
       * DAN has no explicit operation adjacency. The OAB uses a roll trick
         on the dense tensor, so compacting the kept nodes in their original
         order reconnects the chain automatically (o1-o2-o3 with o2 removed
@@ -19,7 +20,7 @@ class SAGCPoolDAN(nn.Module):
         reduces to the deleted mask. In the various_op_nums setting the
         caller folds padding nodes into the deleted mask.
 
-    Protection and exclusion rules (identical to the Song version):
+    Protection and exclusion rules (identical to the SAGC version):
       * eligible operations get score +inf and are always kept
       * deleted (completed) operations get score -inf
       * k = max(num_protected, k_target), capped at N
@@ -29,21 +30,15 @@ class SAGCPoolDAN(nn.Module):
         and keep k uniform across the batch.
     """
 
-    def __init__(self, embed_dim, ope_feat_dim, ratio, k_mode="ops"):
+    def __init__(self, ratio, k_mode="ops"):
         """
-        :param embed_dim:    dimension of the operation embeddings after the
-                             DAN layer that precedes the pooling
-        :param ope_feat_dim: dimension of the normalized raw operation
-                             features (10 in DAN)
-        :param ratio:        pooling ratio, interpretation depends on k_mode
-        :param k_mode:       'ops'  -> k_target = ratio * N
-                             'jobs' -> k_target = ratio * num_jobs
+        :param ratio:   pooling ratio, interpretation depends on k_mode
+        :param k_mode:  'ops'  -> k_target = ratio * N
+                        'jobs' -> k_target = ratio * num_jobs
         """
         super().__init__()
         self.ratio = ratio
         self.k_mode = k_mode
-        self.proj = nn.Linear(embed_dim + ope_feat_dim, 1, bias=False)
-        nn.init.xavier_uniform_(self.proj.weight)
         self.diagnostic_mode = False
         self._last_diag = None
 
@@ -87,11 +82,9 @@ class SAGCPoolDAN(nn.Module):
         k = min(k, N)
         return k
 
-    def forward(self, h, raw_ope_feats, candidate, opes_appertain,
-                eligible_opes, deleted_opes):
+    def forward(self, h, candidate, opes_appertain, eligible_opes, deleted_opes):
         """
         :param h:              operation embeddings [B, N, d]
-        :param raw_ope_feats:  normalized raw operation features [B, N, f]
         :param candidate:      candidate operation indices [B, J]
         :param opes_appertain: job index per operation [B, N]
         :param eligible_opes:  bool [B, N], True = must be kept
@@ -110,38 +103,33 @@ class SAGCPoolDAN(nn.Module):
         B, N, d = h.shape
         device = h.device
 
-        # 1) gate scores from [embedding || raw features]
-        score_input = torch.cat([h, raw_ope_feats], dim=-1)
-        gate_scores = torch.sigmoid(self.proj(score_input).squeeze(-1))  # [B, N]
-
-        # 2) protection and exclusion
+        # 1) protection and exclusion, scored purely at random
         protect_mask = eligible_opes & ~deleted_opes
-        sel_scores = gate_scores.masked_fill(deleted_opes, float('-inf'))
+        sel_scores = torch.rand(B, N, device=device)
+        sel_scores = sel_scores.masked_fill(deleted_opes, float('-inf'))
         sel_scores = sel_scores.masked_fill(protect_mask, float('inf'))
 
         num_protected = int(protect_mask.sum(dim=-1).max().item())
         k = self.compute_k(N, int(opes_appertain.max().item()) + 1, num_protected)
 
-        # 3) select and sort, so the compacted tensor keeps the original order
+        # 2) select and sort, so the compacted tensor keeps the original order
         top_idx = torch.topk(sel_scores, k, dim=-1).indices
         top_idx, _ = torch.sort(top_idx, dim=-1)
 
-        # 4) gather and apply the gate (gradient path for the score projection)
-        gate = gate_scores.gather(1, top_idx)
+        # 3) gather embeddings for the kept positions
         h_pooled = h.gather(1, top_idx.unsqueeze(-1).expand(-1, -1, d))
-        h_pooled = h_pooled * gate.unsqueeze(-1)
 
-        # 5) deleted filler nodes: zero their embeddings so they behave like
+        # 4) deleted filler nodes: zero their embeddings so they behave like
         #    DAN's own deleted nodes (excluded by nonzero_averaging and inert
         #    in the next attention layer)
         kept_deleted = deleted_opes.gather(1, top_idx)
         h_pooled = h_pooled.masked_fill(kept_deleted.unsqueeze(-1), 0.0)
 
-        # 6) rebuild op_mask on the pooled tensor
+        # 5) rebuild op_mask on the pooled tensor
         kept_jobs = opes_appertain.gather(1, top_idx)
         op_mask_pooled = self._rebuild_op_mask(kept_jobs, kept_deleted)
 
-        # 7) remap candidate indices to pooled positions
+        # 6) remap candidate indices to pooled positions
         reverse_map = torch.zeros(B, N, dtype=torch.long, device=device)
         pooled_positions = torch.arange(k, device=device).unsqueeze(0).expand(B, -1)
         reverse_map.scatter_(1, top_idx, pooled_positions)
@@ -149,7 +137,6 @@ class SAGCPoolDAN(nn.Module):
 
         if self.diagnostic_mode:
             self._last_diag = {
-                "gate_scores_raw": gate_scores.detach().cpu(),
                 "sel_scores": sel_scores.detach().cpu(),
                 "top_idx": top_idx.detach().cpu(),
                 "k": k,
