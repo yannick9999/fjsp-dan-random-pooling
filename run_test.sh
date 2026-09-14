@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=24
 #SBATCH --gpus-per-node=1
 #SBATCH --time=24:00:00
-#SBATCH --array=0-2
+#SBATCH --array=0-0
 #SBATCH --output=logs/test_seed%a_%j.out
 #SBATCH --error=logs/test_seed%a_%j.err
 
