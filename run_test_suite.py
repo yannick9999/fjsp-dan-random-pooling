@@ -78,21 +78,38 @@ def main():
             continue
 
         for subfolder in subfolders:
+            seed_dir = os.path.join(OUTPUT_ROOT, f'{RESULT_PREFIX}{seed}')
+            greedy_dir = os.path.join(seed_dir, f'{subfolder}_greedy')
+            sample_dir = os.path.join(seed_dir, f'{subfolder}_sample')
+            # results.xlsx is only written once a mode has finished, so its
+            # presence marks that (seed, dataset, mode) as complete
+            greedy_done = os.path.exists(os.path.join(greedy_dir, 'results.xlsx'))
+            sample_done = os.path.exists(os.path.join(sample_dir, 'results.xlsx'))
+
+            print('-' * 25 + f' seed {seed} | {subfolder} ' + '-' * 25)
+            if greedy_done and sample_done:
+                print('greedy + sample already done, skipping')
+                continue
+
             data_dir = os.path.join(TEST_ROOT, subfolder)
             job_lengths, op_pts, names = load_instances_with_names(data_dir)
             data_set = (job_lengths, op_pts)
 
-            print('-' * 25 + f' seed {seed} | {subfolder} ' + '-' * 25)
+            if greedy_done:
+                print('greedy already done, skipping')
+            else:
+                t0 = time.time()
+                greedy_result = test_greedy_strategy(data_set, model_path, configs.seed_test)
+                save_results(greedy_dir, names, greedy_result)
+                print(f'greedy done in {time.time() - t0:.1f}s, mean makespan {greedy_result[:, 0].mean():.2f}')
 
-            t0 = time.time()
-            greedy_result = test_greedy_strategy(data_set, model_path, configs.seed_test)
-            save_results(os.path.join(OUTPUT_ROOT, f'{RESULT_PREFIX}{seed}', f'{subfolder}_greedy'), names, greedy_result)
-            print(f'greedy done in {time.time() - t0:.1f}s, mean makespan {greedy_result[:, 0].mean():.2f}')
-
-            t0 = time.time()
-            sample_result = test_sampling_strategy(data_set, model_path, configs.sample_times, configs.seed_test)
-            save_results(os.path.join(OUTPUT_ROOT, f'{RESULT_PREFIX}{seed}', f'{subfolder}_sample'), names, sample_result)
-            print(f'sample done in {time.time() - t0:.1f}s, mean makespan {sample_result[:, 0].mean():.2f}')
+            if sample_done:
+                print('sample already done, skipping')
+            else:
+                t0 = time.time()
+                sample_result = test_sampling_strategy(data_set, model_path, configs.sample_times, configs.seed_test)
+                save_results(sample_dir, names, sample_result)
+                print(f'sample done in {time.time() - t0:.1f}s, mean makespan {sample_result[:, 0].mean():.2f}')
 
 
 if __name__ == '__main__':

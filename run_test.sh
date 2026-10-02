@@ -6,13 +6,16 @@
 #SBATCH --cpus-per-task=24
 #SBATCH --gpus-per-node=1
 #SBATCH --time=24:00:00
-#SBATCH --array=0-0
+#SBATCH --array=1-1
 #SBATCH --output=logs/test_seed%a_%j.out
 #SBATCH --error=logs/test_seed%a_%j.err
+#SBATCH --export=ALL
 
 # Evaluates one model_comparison_experiment model (seed = array task id)
 # against every dataset under ./data/data_test, greedy + sampling.
 # Submit with: sbatch run_test.sh   (after run_train.sh has finished)
+# To (re)run only some datasets (e.g. after an interrupted run):
+#   TEST_SUBFOLDERS=set_a,set_b sbatch run_test.sh
 
 set -euo pipefail
 
@@ -48,7 +51,7 @@ if [[ ! -f "${MODEL_PATH}" ]]; then
     exit 1
 fi
 
-echo "=== Testing seed=${SEED} model=${MODEL_PATH} pooling=${POOLING_TYPE} ratio=${POOLING_RATIO} k_mode=${K_MODE} ==="
+echo "=== Testing seed=${SEED} model=${MODEL_PATH} pooling=${POOLING_TYPE} ratio=${POOLING_RATIO} k_mode=${K_MODE} subfolders=${TEST_SUBFOLDERS:-all} ==="
 srun nvidia-smi || true
 
 exec srun "${PYTHON}" run_test_suite.py \
